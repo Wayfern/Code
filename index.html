@@ -211,8 +211,8 @@ window.addEventListener('deviceorientation', (event) => {
     pitch = rawPitch - pitchOffset;
     roll = rawRoll - rollOffset;
 
-    pitch = Math.max(-15, Math.min(15, pitch));
-    roll = Math.max(-15, Math.min(15, roll));
+    pitch = Math.max(-360, Math.min(360, pitch));
+    roll = Math.max(-360, Math.min(360, roll));
 
     const pitchContainer = document.getElementById('pitchContainer');
     const rollContainer = document.getElementById('rollContainer');
