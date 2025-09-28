@@ -152,340 +152,231 @@ body { background:black; display:flex; justify-content:center; align-items:cente
 </div>
 <script>
 // ---------------------------------------------------------------------
-// Simulation state & variables
+// State & variables
 // ---------------------------------------------------------------------
-let pitch=0,roll=0,waterLevel=17,pitchDir=1,rollDir=1;
-let currentTime=new Date();currentTime.setHours(6,0,0,0);
-let simulationMinutes=0;
-let batteries=[
+let waterLevel = 17;
+let simulationMinutes = 0;
+let batteries = [
   {id:1,soc:+(60+Math.random()*40).toFixed(1),volts:48.2,temp:22},
   {id:2,soc:+(60+Math.random()*40).toFixed(1),volts:48.1,temp:23},
   {id:3,soc:+(60+Math.random()*40).toFixed(1),volts:47.9,temp:21},
-  {id:4,soc:+(60+Math.random()*40).toFixed(1),volts:48.0,temp:22}];
-let tires=[
-  {id:'Front Left',position:'Front Left',pressure:35+Math.random()*5},
-  {id:'Rear Left In',position:'Rear Left In',pressure:35+Math.random()*5},
-  {id:'Rear Left Out',position:'Rear Left Out',pressure:35+Math.random()*5},
-  {id:'Front Right',position:'Front Right',pressure:35+Math.random()*5},
-  {id:'Rear Right In',position:'Rear Right In',pressure:35+Math.random()*5},
-  {id:'Rear Right Out',position:'Rear Right Out',pressure:35+Math.random()*5}];
-let sim={inputWatts:800,loadWatts:-1650,chargeSource:'solar',loads:{lights:120,fridge:180,hvac:850,electronics:95,other:405}};
-let powerHistory=[],warnings=[],spikeCount=0;
-let lastInputTime=Date.now(),lastChargeSourceUpdate=0;
-const INPUT_GRACE_MS=5000;
+  {id:4,soc:+(60+Math.random()*40).toFixed(1),volts:48.0,temp:22}
+];
+let tires = [
+  {id:'Front Left',pressure:35+Math.random()*5},
+  {id:'Rear Left In',pressure:35+Math.random()*5},
+  {id:'Rear Left Out',pressure:35+Math.random()*5},
+  {id:'Front Right',pressure:35+Math.random()*5},
+  {id:'Rear Right In',pressure:35+Math.random()*5},
+  {id:'Rear Right Out',pressure:35+Math.random()*5}
+];
+let sim = {inputWatts:800, loadWatts:-1650, chargeSource:'solar', loads:{lights:120, fridge:180, hvac:850, electronics:95, other:405}};
+let powerHistory = [], warnings = [], spikeCount = 0;
+let lastInputTime = Date.now(), lastChargeSourceUpdate = 0;
+const INPUT_GRACE_MS = 5000;
+
 // ---------------------------------------------------------------------
-// Helper / display functions
+// Helper functions
 // ---------------------------------------------------------------------
-function getTotalSoC(){
-        return +(batteries.reduce((s,b)=>s+b.soc,0)/batteries.length).toFixed(1);}
-
-function getBankVoltage(){
-        return +(batteries.reduce((s,b)=>s+b.volts,0)/batteries.length).toFixed(1);}
-
-function computePower(){
-        return Math.round(sim.inputWatts+sim.loadWatts);}
-
-function getTotalCurrent(){
-    const v=getBankVoltage()||48;
-        return +(computePower()/v).toFixed(1);}
-
-function estimateTimeLeft(){
-    const usableWh=4000*(getTotalSoC()/100);const draw=Math.max(50,-sim.loadWatts);const hours=usableWh/draw;
-       if(hours>100)
-       return '>100h';
-       if(hours<0.02)
-       return '<15m';const h=Math.floor(hours);const m=Math.round((hours-h)*60);
-       return `${h}h${m}m`;}
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-// Charge source & charge time (synchronised)
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-function calculateChargeTime(){
-    const soc=getTotalSoC();
-        if(sim.chargeSource==='none'||sim.inputWatts<=0||(Date.now()-lastInputTime)>INPUT_GRACE_MS){
-    const el=document.getElementById('chargeTime');
-    el.textContent='00h00m';el.style.visibility='hidden';
-        return'No Input';}
-    const batteryCapacityWh=4000*4;
-    const remainingWh=batteryCapacityWh*((100-soc)/100);
-    const hours=remainingWh/sim.inputWatts;
-    let display;
-        if(hours>48)display='>2d';
-        else if(hours<0.1)display='<6m';
-        else{const h=Math.floor(hours);
+function getTotalSoC() { return +(batteries.reduce((s,b)=>s+b.soc,0)/batteries.length).toFixed(1); }
+function getBankVoltage() { return +(batteries.reduce((s,b)=>s+b.volts,0)/batteries.length).toFixed(1); }
+function computePower() { return Math.round(sim.inputWatts + sim.loadWatts); }
+function getTotalCurrent() { const v=getBankVoltage()||48; return +(computePower()/v).toFixed(1); }
+function estimateTimeLeft() {
+    const usableWh=4000*(getTotalSoC()/100);
+    const draw=Math.max(50,-sim.loadWatts);
+    const hours=usableWh/draw;
+    if(hours>100) return '>100h';
+    if(hours<0.02) return '<15m';
+    const h=Math.floor(hours);
     const m=Math.round((hours-h)*60);
-    display=`${h}h${m}m`;}
-    const el=document.getElementById('chargeTime');
-    el.textContent=display;el.style.visibility='visible';
-        return display;}
+    return `${h}h${m}m`;
+}
 
-function updateChargeSourceUI() {
-    const sourceIcon = document.getElementById('sourceIcon');
-    const sourceName = document.getElementById('sourceName');
-    const sourceDetails = document.getElementById('sourceDetails');
-        switch (sim.chargeSource) {
-        case 'solar':
-    sourceIcon.textContent = '☀';
-    sourceIcon.style.background = '#ffa500';
-    sourceName.textContent = 'Solar';
-    sourceDetails.textContent = `+${sim.inputWatts}W`;
-    sourceDetails.style.visibility = 'visible';
-        break;
-        case 'generator':
-    sourceIcon.textContent = '⚡';
-    sourceIcon.style.background = '#ff6b6b';
-    sourceName.textContent = 'Generator';
-    sourceDetails.textContent = `+${sim.inputWatts}W`;
-    sourceDetails.style.visibility = 'visible';
-        break;
-        case 'mains':
-    sourceIcon.textContent = '🔌';
-    sourceIcon.style.background = '#4ecdc4';
-    sourceName.textContent = 'Mains';
-    sourceDetails.textContent = `+${sim.inputWatts}W`;
-    sourceDetails.style.visibility = 'visible';
-        break;
-        case 'none':
-        default:
-    sourceIcon.textContent = '✖';
-    sourceIcon.style.background = '#555';
-    sourceName.textContent = 'No Connection';
-    sourceDetails.textContent = '0W';
-    sourceDetails.style.visibility = 'hidden';
-        break;}}
-        // ---------------------------------------------------------------------
-// Battery modules rendering & gauge
+function updateColor(element,angle){
+    if(!element) return;
+    if(Math.abs(angle)<5) element.style.color='green';
+    else if(Math.abs(angle)<10) element.style.color='orange';
+    else element.style.color='red';
+}
+
+// ---------------------------------------------------------------------
+// Tank & indicators
+// ---------------------------------------------------------------------
+function updateTank(pitchAngle){
+    const tank=document.getElementById('tank');
+    const waterSurface=document.getElementById('waterSurface');
+    const warning=document.getElementById('tankWarning');
+    if(!tank||!waterSurface||!warning) return;
+    tank.style.transform=`rotate(${pitchAngle}deg)`;
+    const maxTilt=15;
+    const tiltPercent=Math.max(-maxTilt,Math.min(maxTilt,pitchAngle))/maxTilt*20;
+    const levelHeight=100-waterLevel;
+    waterSurface.style.clipPath=`polygon(0% 100%,100% 100%,100% ${levelHeight-tiltPercent}%,0% ${levelHeight+tiltPercent}%)`;
+    const tankHeight=50;
+    const waterHeightPx=(waterLevel/100)*tankHeight;
+    const effectiveWaterHeight=waterHeightPx-(Math.sin(pitchAngle*Math.PI/180)*(tank.offsetWidth/2));
+    warning.style.display=effectiveWaterHeight<=0?'block':'none';
+}
+
+// ---------------------------------------------------------------------
+// Battery modules & gauge
 // ---------------------------------------------------------------------
 function getColorVar(soc){
-        if(soc<=2)
-        return{fill:'var(--empty)',text:'white'};if(soc<20)
-        return{fill:'var(--bad)',text:'white'};if(soc<45)
-        return{fill:'var(--warn)',text:'#2a1500'};
-        return{fill:'var(--good)',text:'#023018'};}
+    if(soc<=2) return {fill:'var(--empty)',text:'white'};
+    if(soc<20) return {fill:'var(--bad)',text:'white'};
+    if(soc<45) return {fill:'var(--warn)',text:'#2a1500'};
+    return {fill:'var(--good)',text:'#023018'};
+}
 
 function getBatteryIcon(soc){
-        if(soc<=10)
-        return'fas fa-battery-empty';if(soc<=25)
-        return'fas fa-battery-quarter';if(soc<=50)
-        return'fas fa-battery-half';if(soc<=75)
-        return'fas fa-battery-three-quarters';
-        return'fas fa-battery-full';}
+    if(soc<=10) return 'fas fa-battery-empty';
+    if(soc<=25) return 'fas fa-battery-quarter';
+    if(soc<=50) return 'fas fa-battery-half';
+    if(soc<=75) return 'fas fa-battery-three-quarters';
+    return 'fas fa-battery-full';
+}
 
 function renderBatteryModules(){
     const grid=document.getElementById('batteryGrid');
-        if(!grid)
-        return;grid.innerHTML='';batteries.forEach(b=>{
-    const module=document.createElement('div');module.className='battery-module';
-    const color=getColorVar(b.soc);
-    const iconClass=getBatteryIcon(b.soc);
-    module.innerHTML=`<i class="module-icon ${iconClass}" style="color:${color.fill};"></i><div class="module-number">${b.id}</div><div class="module-percent">${b.soc.toFixed(1)}%</div><div class="module-details">${b.volts}V<br>${b.temp}°C</div>`;
-    grid.appendChild(module);})}
+    if(!grid) return;
+    grid.innerHTML='';
+    batteries.forEach(b=>{
+        const module=document.createElement('div'); module.className='battery-module';
+        const color=getColorVar(b.soc);
+        const iconClass=getBatteryIcon(b.soc);
+        module.innerHTML=`<i class="module-icon ${iconClass}" style="color:${color.fill};"></i>
+        <div class="module-number">${b.id}</div>
+        <div class="module-percent">${b.soc.toFixed(1)}%</div>
+        <div class="module-details">${b.volts}V<br>${b.temp}°C</div>`;
+        grid.appendChild(module);
+    });
+}
 
 function updateGauge(soc){
     const arc=document.getElementById('gaugeArc');
-        if(!arc)
-        return;const pct=Math.max(0,Math.min(100,soc));
-    const angle=pct/100*360;const r=22;const cx=30,cy=30;
-        if(angle===0){arc.setAttribute('d','');
-        return;}const large=angle>180?1:0;
+    if(!arc) return;
+    const pct=Math.max(0,Math.min(100,soc));
+    const angle=pct/100*360;
+    const r=22, cx=30, cy=30;
+    if(angle===0){arc.setAttribute('d',''); return;}
+    const large=angle>180?1:0;
     const end=polarToCartesian(cx,cy,r,angle);
-    const start=polarToCartesian(cx,cy,r,0);const d=`M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`;
-    arc.setAttribute('d',d);}
+    const start=polarToCartesian(cx,cy,r,0);
+    const d=`M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`;
+    arc.setAttribute('d',d);
+}
 
 function polarToCartesian(cx,cy,r,angleDeg){
     const a=(angleDeg-90)*Math.PI/180.0;
-        return{x:cx+(r*Math.cos(a)),y:cy+(r*Math.sin(a))};}
+    return {x:cx+(r*Math.cos(a)),y:cy+(r*Math.sin(a))};
+}
+
 // ---------------------------------------------------------------------
-// Power spike detection
+// Tire pressure rendering
 // ---------------------------------------------------------------------
-function addToPowerHistory(power){powerHistory.push(power);if(powerHistory.length>60)powerHistory.shift();}
-function detectSpike(currentPower){
-        if(powerHistory.length<10)
-        return false;const recent=powerHistory.slice(-10);
-    const avg=recent.reduce((s,p)=>s+p,0)/recent.length;
-    const threshold=Math.abs(avg)*0.3;return Math.abs(currentPower-avg)>threshold&&Math.abs(currentPower-avg)>200;}
-// ---------------------------------------------------------------------
-// Tire pressure
-// ---------------------------------------------------------------------
-function getTirePressureColor(pressure){if(pressure<30)return'var(--bad)';if(pressure<32)return'var(--warn)';if(pressure>40)return'var(--warn)';return'var(--good)';}
+function getTirePressureColor(pressure){
+    if(pressure<30) return 'var(--bad)';
+    if(pressure<32) return 'var(--warn)';
+    if(pressure>40) return 'var(--warn)';
+    return 'var(--good)';
+}
+
 function renderTirePressure(){
     const tireGrid=document.getElementById('tireGridCompact');
-        if(!tireGrid)
-        return;tireGrid.innerHTML='';
+    if(!tireGrid) return;
+    tireGrid.innerHTML='';
     tires.forEach(tire=>{
-    const tireElement=document.createElement('div');
-    tireElement.className='tire-ring-compact';
-    const pressure=tire.pressure;const color=getTirePressureColor(pressure);
-    const percentage=Math.min(100,Math.max(0,(pressure-25)/20*100));
-    const circumference=2*Math.PI*7;
-    const offset=circumference-(percentage/100)*circumference;tireElement.innerHTML=`<svg viewBox="0 0 18 18"><circle cx="9" cy="9" r="7" fill="none" stroke="#333" stroke-width="1"/><circle cx="9" cy="9" r="7" fill="none" stroke="${color}" stroke-width="1" stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" transform="rotate(-90 9 9)"/><text x="9" y="10" text-anchor="middle" fill="white" font-size="4" font-weight="bold">${pressure.toFixed(0)}</text></svg><div class="tire-label-compact">${tire.id}</div>`;
-    tireGrid.appendChild(tireElement);});}
+        const tireElement=document.createElement('div');
+        tireElement.className='tire-ring-compact';
+        const pressure=tire.pressure;
+        const color=getTirePressureColor(pressure);
+        const percentage=Math.min(100,Math.max(0,(pressure-25)/20*100));
+        const circumference=2*Math.PI*7;
+        const offset=circumference-(percentage/100)*circumference;
+        tireElement.innerHTML=`<svg viewBox="0 0 18 18">
+        <circle cx="9" cy="9" r="7" fill="none" stroke="#333" stroke-width="1"/>
+        <circle cx="9" cy="9" r="7" fill="none" stroke="${color}" stroke-width="1" stroke-linecap="round" stroke-dasharray="${circumference}" stroke-dashoffset="${offset}" transform="rotate(-90 9 9)"/>
+        <text x="9" y="10" text-anchor="middle" fill="white" font-size="4" font-weight="bold">${pressure.toFixed(0)}</text></svg>
+        <div class="tire-label-compact">${tire.id}</div>`;
+        tireGrid.appendChild(tireElement);
+    });
+}
+
 // ---------------------------------------------------------------------
-// Warnings
+// Gyro / DeviceOrientation
 // ---------------------------------------------------------------------
-function addWarning(text,type='warning'){
-    const now=Date.now();
-        if(warnings.some(w=>w.text===text&&(now-w.timestamp)<30000))
-        return;warnings.unshift({text,type,timestamp:now,time:
-        new Date().toLocaleTimeString('en-US',{hour12:false,hour:'2-digit',minute:'2-digit'})});
-        if(warnings.length>6)warnings.pop();}
-        
-function renderWarnings(){
-    const warningsList=document.getElementById('warningsList');
-        if(!warningsList)
-        return;warningsList.innerHTML='';
-        if(warnings.length===0){const noWarnings=document.createElement('div');
-    noWarnings.className='no-warnings';noWarnings.textContent='All systems nominal';
-    warningsList.appendChild(noWarnings);
-        return;}warnings.forEach(w=>{
-    const item=document.createElement('div');
-    item.className=`warning-item warning-${w.type}`;
-    item.innerHTML=`<div class="warning-text">${w.text}</div><div class="warning-time">${w.time}</div>`;
-    warningsList.appendChild(item);});}
-// ---------------------------------------------------------------------
-// Loads breakdown
-// ---------------------------------------------------------------------
-function updateLoadBreakdown(){
-    const timeVariation=Math.sin((simulationMinutes/60)*Math.PI/4);
-    sim.loads.lights=Math.round(120+timeVariation*30);
-    sim.loads.fridge=Math.round(180+Math.sin(simulationMinutes/30)*20);
-    sim.loads.hvac=Math.round(850+timeVariation*300+Math.random()*100);
-    sim.loads.electronics=Math.round(95+Math.random()*40);
-    const totalLoads=Object.values(sim.loads).reduce((s,l)=>s+l,0);
-    sim.loads.other=Math.abs(sim.loadWatts)-(totalLoads-sim.loads.other);
-    sim.loads.other=Math.max(0,sim.loads.other);const setText=(id,text)=>{
-    const el=document.getElementById(id);if(el)el.textContent=text;};
-    setText('lightsLoad',`-${sim.loads.lights}W`);
-    setText('fridgeLoad',`-${sim.loads.fridge}W`);
-    setText('hvacLoad',`-${sim.loads.hvac}W`);
-    setText('electronicsLoad',`-${sim.loads.electronics}W`);
-    setText('otherLoad',`-${Math.round(sim.loads.other)}W`);}
-// ---------------------------------------------------------------------
-// Tank + indicators
-// ---------------------------------------------------------------------
-function updateTank(pitchAngle){
-    const tank=document.querySelector('#tankContainer .tank')||document.getElementById('tank');
-    const waterSurface=document.getElementById('waterSurface');const warning=document.getElementById('tankWarning');
-        if(!tank||!waterSurface||!warning)
-        return;tank.style.transform=`rotate(${pitchAngle}deg)`;
-    const maxTilt=15;const tiltPercent=Math.max(-maxTilt,Math.min(maxTilt,pitchAngle))/maxTilt*20;
-    const levelHeight=100-waterLevel;
-    waterSurface.style.clipPath=`polygon(0% 100%,100% 100%,100% ${levelHeight-tiltPercent}%,0% ${levelHeight+tiltPercent}%)`;
-    const tankHeight=50;const waterHeightPx=(waterLevel/100)*tankHeight;
-    const effectiveWaterHeight=waterHeightPx-(Math.sin(pitchAngle*Math.PI/180)*(tank.offsetWidth/2));
-    warning.style.display=effectiveWaterHeight<=0?'block':'none';}
-// ---------------------------------------------------------------------
-// Colour helpers
-// ---------------------------------------------------------------------
-function updateColor(element,angle){
-        if(!element)
-        return;
-        if(Math.abs(angle)<5)element.style.color='green';
-        else if(Math.abs(angle)<10)element.style.color='orange';
-        else element.style.color='red';}
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-// Main battery update orchestration
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-function updateBatteryDisplay() {simulationMinutes += 15;const totalMinutes = 6 * 60 + simulationMinutes;
-    const hours = Math.floor(totalMinutes / 60) % 24;
-    const minutes = totalMinutes % 60;
-    const timeInHours = totalMinutes / 60;
-    const timeEl = document.getElementById('timeDisplay');
-    const tempEl = document.getElementById('tempDisplay');
-    const tempSine = Math.sin((timeInHours - 6) * Math.PI / 12);
-    const temperature = 15 + 5 * tempSine;
-        if (timeEl) timeEl.style.display = 'none';
-        if (tempEl) tempEl.textContent = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ' | ' + Math.round(temperature) + '°C';
-        for (let i = 0; i < batteries.length; i++) {
-    const change = (Math.random() - 0.5) * 4;
-    batteries[i].soc = +(Math.max(0, Math.min(100, batteries[i].soc + change))).toFixed(1);
-    batteries[i].volts = +(48 + (batteries[i].soc - 50) / 100 * 2 + (Math.random() * 0.2 - 0.1)).toFixed(1);
-    batteries[i].temp = Math.round(20 + Math.random() * 8);}
-    const powerSine = Math.sin(timeInHours * Math.PI / 6);
-    const randomFactor = (Math.random() - 0.5) * 0.3;
-    sim.loadWatts = Math.round(-1200 - 400 * (powerSine + randomFactor));
-    const now = Date.now();
-        if (now - lastChargeSourceUpdate >= 500) {
-    lastChargeSourceUpdate = now;
-        if (Math.random() < 0.8) {
-    sim.inputWatts = 0;
-    sim.chargeSource = 'none';} 
-        else {sim.inputWatts = Math.round(600 + 400 * Math.sin(timeInHours * Math.PI / 8) + Math.random() * 200);
-        if (hours >= 6 && hours < 18 && sim.inputWatts > 200) sim.chargeSource = 'solar';
-        else if (sim.inputWatts > 500) sim.chargeSource = 'generator';
-        else sim.chargeSource = 'mains';}}
-        if (sim.inputWatts > 0) lastInputTime = Date.now();
-        for (let i = 0; i < tires.length; i++) {
-    const change = (Math.random() - 0.5) * 0.5;
-    tires[i].pressure = +(Math.max(25, Math.min(45, tires[i].pressure + change))).toFixed(1);}
-    const soc = getTotalSoC();
-    const bankV = getBankVoltage();
-    const netW = computePower();
-    const curA = getTotalCurrent();
-    addToPowerHistory(netW);
-        if (detectSpike(netW)) {
-    spikeCount++;
-    addWarning(`Power spike detected: ${netW}W`, netW > 0 ? 'warning': 'critical');}
-    const gaugeText = document.getElementById('gaugeText');
-        if (gaugeText) gaugeText.textContent = soc.toFixed(1) + '%';
-    updateGauge(soc);
-    renderBatteryModules();
-    const netEl = document.getElementById('netPower');
-        if (netEl) netEl.textContent = (netW >= 0 ? `+${netW}`: netW) + 'W';
-    const inpEl = document.getElementById('inputPower');
-        if (inpEl) inpEl.textContent = (sim.inputWatts >= 0 ? `+${sim.inputWatts}`: sim.inputWatts) + 'W';
-    const loadEl = document.getElementById('loadPower');
-        if (loadEl) loadEl.textContent = `${sim.loadWatts}W`;
-    const bankEl = document.getElementById('bankVoltage');
-        if (bankEl) bankEl.textContent = bankV + 'V';
-    const curEl = document.getElementById('bankCurrent');
-        if (curEl) curEl.textContent = (curA >= 0 ? `+${curA}`: curA) + 'A';
-    const estEl = document.getElementById('estTime');
-        if (estEl) estEl.textContent = estimateTimeLeft();
-    updateChargeSourceUI();
-    const ct = calculateChargeTime();
-    updateLoadBreakdown();
-    renderWarnings();
-    renderTirePressure();
-        if (soc < 20) addWarning(`Low battery: ${soc.toFixed(1)}%`, 'warning');
-        if (soc < 10) addWarning(`Critical battery: ${soc.toFixed(1)}%`, 'critical');
-    batteries.forEach(b => {
-        if (b.temp > 35) addWarning(`Module ${b.id} overheating: ${b.temp}°C`, 'warning');
-        if (b.soc < 5) addWarning(`Module ${b.id} critical: ${b.soc.toFixed(1)}%`, 'critical');});
-        if (sim.loads.hvac > 1200) addWarning('HVAC high consumption', 'warning');
-        if (Math.abs(sim.loadWatts) > 2000) addWarning('Total load exceeding capacity', 'critical');
-    tires.forEach(tire => {
-        if (tire.pressure < 30) addWarning(`${tire.id} tire critically low: ${tire.pressure.toFixed(1)} PSI`, 'critical');
-        else if (tire.pressure < 32) addWarning(`${tire.id} tire low: ${tire.pressure.toFixed(1)} PSI`, 'warning');
-        else if (tire.pressure > 40) addWarning(`${tire.id} tire overpressure: ${tire.pressure.toFixed(1)} PSI`, 'warning');});}
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-// Combined update loop (seconds)
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-    setInterval(() => {
-        document.getElementById('tankPercent').innerText = `(${Math.round(waterLevel)}%)`;
-        if (Math.random() < 0.4) pitchDir *= -1;
-    pitch += pitchDir * (Math.random() * 2);
+let pitchOffset = 0, rollOffset = 0, calibrated = false;
+
+window.addEventListener('deviceorientation', (event) => {
+    let rawPitch = event.beta ?? 0;  // front/back tilt
+    let rawRoll = event.gamma ?? 0;  // side tilt
+
+    if (!calibrated) {
+        pitchOffset = rawPitch;
+        rollOffset = rawRoll;
+        calibrated = true;
+    }
+
+    let pitch = rawPitch - pitchOffset;
+    let roll = rawRoll - rollOffset;
+
     pitch = Math.max(-15, Math.min(15, pitch));
-        if (Math.random() < 0.4) rollDir *= -1;
-    roll += rollDir * (Math.random() * 2);
     roll = Math.max(-15, Math.min(15, roll));
+
     const pitchContainer = document.getElementById('pitchContainer');
     const rollContainer = document.getElementById('rollContainer');
-        if (pitchContainer) pitchContainer.style.transform = `rotate(${pitch}deg)`;
-        if (rollContainer) rollContainer.style.transform = `rotate(${roll}deg)`;
+    if (pitchContainer) pitchContainer.style.transform = `rotate(${pitch}deg)`;
+    if (rollContainer) rollContainer.style.transform = `rotate(${roll}deg)`;
+
     const pitchVal = document.getElementById('pitchValue');
     const rollVal = document.getElementById('rollValue');
-        if (pitchVal) pitchVal.innerText = `Pitch: ${pitch.toFixed(1)}°`;
-        if (rollVal) rollVal.innerText = `Roll: ${roll.toFixed(1)}°`;
+    if (pitchVal) pitchVal.innerText = `Pitch: ${pitch.toFixed(1)}°`;
+    if (rollVal) rollVal.innerText = `Roll: ${roll.toFixed(1)}°`;
+
     updateColor(pitchVal, pitch);
     updateColor(rollVal, roll);
     updateTank(pitch);
-    updateBatteryDisplay();}, 50);
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-// Initialize UI once
-// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+});
+
+// ---------------------------------------------------------------------
+// Battery / load updates
+// ---------------------------------------------------------------------
+function updateBatteryDisplay() {
+    simulationMinutes += 15;
+    const totalMinutes = 6 * 60 + simulationMinutes;
+    const hours = Math.floor(totalMinutes / 60) % 24;
+    const minutes = totalMinutes % 60;
+    const timeInHours = totalMinutes / 60;
+
+    const tempEl = document.getElementById('tempDisplay');
+    const tempSine = Math.sin((timeInHours - 6) * Math.PI / 12);
+    const temperature = 15 + 5 * tempSine;
+    if (tempEl) tempEl.textContent = String(hours).padStart(2, '0') + ':' + String(minutes).padStart(2, '0') + ' | ' + Math.round(temperature) + '°C';
+
+    for (let i = 0; i < batteries.length; i++) {
+        const change = (Math.random() - 0.5) * 4;
+        batteries[i].soc = +(Math.max(0, Math.min(100, batteries[i].soc + change))).toFixed(1);
+        batteries[i].volts = +(48 + (batteries[i].soc - 50) / 100 * 2 + (Math.random() * 0.2 - 0.1)).toFixed(1);
+        batteries[i].temp = Math.round(20 + Math.random() * 8);
+    }
+
+    for (let i = 0; i < tires.length; i++) {
+        const change = (Math.random() - 0.5) * 0.5;
+        tires[i].pressure = +(Math.max(25, Math.min(45, tires[i].pressure + change))).toFixed(1);
+    }
+
     renderBatteryModules();
     renderTirePressure();
-    updateBatteryDisplay();
+}
+
+// ---------------------------------------------------------------------
+// Initialize
+// ---------------------------------------------------------------------
+renderBatteryModules();
+renderTirePressure();
+updateBatteryDisplay();
+setInterval(updateBatteryDisplay, 5000); // update battery/tire values every 5s
 </script>
 </body>
 </html>
